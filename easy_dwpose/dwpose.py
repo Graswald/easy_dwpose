@@ -2,8 +2,7 @@ from typing import Callable, Dict, Optional, Union
 
 import cv2
 import numpy as np
-import PIL
-import PIL.Image
+from PIL import Image
 import torch
 from huggingface_hub import hf_hub_download
 
@@ -13,17 +12,17 @@ from easy_dwpose.draw import draw_openpose
 
 class DWposeDetector:
     def __init__(self, device: str = "сpu"):
-        hf_hub_download("RedHash/DWPose", "yolox_l.onnx", local_dir="./checkpoints")
-        hf_hub_download("RedHash/DWPose", "dw-ll_ucoco_384.onnx", local_dir="./checkpoints")
+        model_det = hf_hub_download("RedHash/DWPose", "yolox_l.onnx")
+        model_pose = hf_hub_download("RedHash/DWPose", "dw-ll_ucoco_384.onnx")
         self.pose_estimation = Wholebody(
-            device=device, model_det="checkpoints/yolox_l.onnx", model_pose="checkpoints/dw-ll_ucoco_384.onnx"
+            device=device, model_det=model_det, model_pose=model_pose
         )
 
-    def _format_pose(self, candidates, scores, width, height):
+    def _format_pose(self, candidates, scores, scale_x, scale_y):
         num_candidates, _, locs = candidates.shape
 
-        candidates[..., 0] /= float(width)
-        candidates[..., 1] /= float(height)
+        candidates[..., 0] *= scale_x
+        candidates[..., 1] *= scale_y
 
         bodies = candidates[:, :18].copy()
         bodies = bodies.reshape(num_candidates * 18, locs)
@@ -56,13 +55,13 @@ class DWposeDetector:
     @torch.inference_mode()
     def __call__(
         self,
-        image: Union[PIL.Image.Image, np.ndarray],
+        image: Union[Image.Image, np.ndarray],
         detect_resolution: int = 512,
         draw_pose: Optional[Callable] = draw_openpose,
         output_type: str = "pil",
         **kwargs,
-    ) -> Union[PIL.Image.Image, np.ndarray, Dict]:
-        if type(image) != np.ndarray:
+    ) -> Union[Image.Image, np.ndarray, Dict]:
+        if isinstance(image, Image.Image):
             image = np.array(image.convert("RGB"))
 
         image = image.copy()
@@ -71,18 +70,21 @@ class DWposeDetector:
         image = resize_image(image, target_resolution=detect_resolution)
         height, width, _ = image.shape
 
+        scale_x = original_width / width
+        scale_y = original_height / height
+
         candidates, scores = self.pose_estimation(image)
 
-        pose = self._format_pose(candidates, scores, width, height)
+        pose = self._format_pose(candidates, scores, scale_x, scale_y)
 
-        if not draw_pose:
+        if output_type == "pose":
             return pose
 
-        pose_image = draw_pose(pose, height=height, width=width, **kwargs)
+        pose_image = draw_pose(pose, height=original_height, width=original_width, **kwargs)
         pose_image = cv2.resize(pose_image, (original_width, original_height), cv2.INTER_LANCZOS4)
 
         if output_type == "pil":
-            pose_image = PIL.Image.fromarray(pose_image)
+            pose_image = Image.fromarray(pose_image)
         elif output_type == "np":
             pass
         else:

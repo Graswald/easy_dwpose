@@ -1,13 +1,14 @@
 import math
+from typing import Tuple
 
 import cv2
 import numpy as np
+import matplotlib
 
 eps = 0.01
 
 
-def draw_bodypose(canvas, candidate, subset):
-    H, W, C = canvas.shape
+def draw_bodypose(canvas, candidate, subset, single_color: Tuple[int, int, int]):
     candidate = np.array(candidate)
     subset = np.array(subset)
 
@@ -61,14 +62,17 @@ def draw_bodypose(canvas, candidate, subset):
             index = subset[n][np.array(limbSeq[i]) - 1]
             if -1 in index:
                 continue
-            Y = candidate[index.astype(int), 0] * float(W)
-            X = candidate[index.astype(int), 1] * float(H)
+            Y = candidate[index.astype(int), 0]
+            X = candidate[index.astype(int), 1]
             mX = np.mean(X)
             mY = np.mean(Y)
             length = ((X[0] - X[1]) ** 2 + (Y[0] - Y[1]) ** 2) ** 0.5
             angle = math.degrees(math.atan2(X[0] - X[1], Y[0] - Y[1]))
-            polygon = cv2.ellipse2Poly((int(mY), int(mX)), (int(length / 2), stickwidth), int(angle), 0, 360, 1)
-            cv2.fillConvexPoly(canvas, polygon, colors[i])
+            polygon = cv2.ellipse2Poly(
+                (int(mY), int(mX)), (int(length / 2), stickwidth), int(angle), 0, 360, 1
+            )
+            _color = colors[i] if single_color is None else single_color
+            cv2.fillConvexPoly(canvas, polygon, _color)
 
     canvas = (canvas * 0.6).astype(np.uint8)
 
@@ -78,18 +82,15 @@ def draw_bodypose(canvas, candidate, subset):
             if index == -1:
                 continue
             x, y = candidate[index][0:2]
-            x = int(x * W)
-            y = int(y * H)
-            cv2.circle(canvas, (int(x), int(y)), 4, colors[i], thickness=-1)
+            x = int(x)
+            y = int(y)
+            _color = colors[i] if single_color is None else single_color
+            cv2.circle(canvas, (int(x), int(y)), 4, _color, thickness=-1)
 
     return canvas
 
 
-def draw_handpose(canvas, all_hand_peaks):
-    import matplotlib
-
-    H, W, C = canvas.shape
-
+def draw_handpose(canvas, all_hand_peaks, single_color: Tuple[int, int, int]):
     edges = [
         [0, 1],
         [1, 2],
@@ -122,55 +123,61 @@ def draw_handpose(canvas, all_hand_peaks):
             x1, y1 = peaks[e[0]]
             x2, y2 = peaks[e[1]]
 
-            x1 = int(x1 * W)
-            y1 = int(y1 * H)
-            x2 = int(x2 * W)
-            y2 = int(y2 * H)
+            x1 = int(x1)
+            y1 = int(y1)
+            x2 = int(x2)
+            y2 = int(y2)
             if x1 > eps and y1 > eps and x2 > eps and y2 > eps:
+                _color = (
+                    matplotlib.colors.hsv_to_rgb([ie / float(len(edges)), 1.0, 1.0])
+                    * 255
+                    if single_color is None
+                    else single_color
+                )
                 cv2.line(
                     canvas,
                     (x1, y1),
                     (x2, y2),
-                    matplotlib.colors.hsv_to_rgb([ie / float(len(edges)), 1.0, 1.0]) * 255,
+                    _color,
                     thickness=2,
                 )
 
         for _, keyponit in enumerate(peaks):
             x, y = keyponit
-
-            x = int(x * W)
-            y = int(y * H)
+            x = int(x)
+            y = int(y)
+            _color = (0, 0, 255) if single_color is None else single_color
             if x > eps and y > eps:
-                cv2.circle(canvas, (x, y), 4, (0, 0, 255), thickness=-1)
+                cv2.circle(canvas, (x, y), 4, _color, thickness=-1)
     return canvas
 
 
-def draw_facepose(canvas, all_lmks):
-    H, W, C = canvas.shape
+def draw_facepose(canvas, all_lmks, single_color: Tuple[int, int, int]):
     for lmks in all_lmks:
         lmks = np.array(lmks)
         for lmk in lmks:
             x, y = lmk
-            x = int(x * W)
-            y = int(y * H)
+            x = int(x)
+            y = int(y)
+            _color = (255, 255, 255) if single_color is None else single_color
             if x > eps and y > eps:
-                cv2.circle(canvas, (x, y), 3, (255, 255, 255), thickness=-1)
+                cv2.circle(canvas, (x, y), 3, _color, thickness=-1)
     return canvas
 
 
-def draw_pose(pose, height: int, width: int, include_face: bool = True, include_hands: bool = True) -> np.ndarray:
+def draw_pose(
+    pose, height: int, width: int, single_color: Tuple[int, int, int] = None
+) -> np.ndarray:
     canvas = np.zeros(shape=(height, width, 3), dtype=np.uint8)
 
     candidate = pose["bodies"]
     subset = pose["body_scores"]
-    canvas = draw_bodypose(canvas, candidate, subset)
-
-    if include_face:
-        faces = pose["faces"]
-        canvas = draw_facepose(canvas, faces)
-
-    if include_hands:
-        hands = pose["hands"]
-        canvas = draw_handpose(canvas, hands)
+    canvas = draw_bodypose(canvas, candidate, subset, single_color)
+    faces = pose.get("faces", None)
+    hands = pose.get("hands", None)
+    if faces is not None:
+        canvas = draw_facepose(canvas, faces, single_color)
+    if hands is not None:
+        canvas = draw_handpose(canvas, hands, single_color)
 
     return canvas
